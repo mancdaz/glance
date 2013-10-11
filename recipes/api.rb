@@ -94,6 +94,26 @@ template "/etc/glance/glance-scrubber-paste.ini" do
   mode "0600"
 end
 
+# are we using rbd to store our images?
+if node['glance']['api']['default_store'] == "rbd"
+
+  rbd_store_user = node['glance']['api']['rbd']['rbd_store_user']
+  rbd_store_pool = node['glance']['api']['rbd']['rbd_store_pool']
+
+  # get (or create) the glance rbd user in cephx
+  Mixlib::ShellOut.new("ceph auth get-or-create client.#{rbd_store_user}").run_command
+  Mixlib::ShellOut.new("ceph auth caps client.#{rbd_store_user} mon 'allow r' osd 'allow class-read object_prefix rbd_children, allow rwx pool=#{rbd_store_pool}'").run_command
+
+  # get the full client, with caps, and write it out to file
+  # TODO(mancdaz): discover ceph config dir rather than hardcode
+  rbd_user_keyring = Mixlib::ShellOut.new("ceph auth get client.#{rbd_store_user}").run_command.stdout
+  file "/etc/ceph/ceph.client.#{rbd_store_user}.keyring" do
+    content rbd_user_keyring
+    mode "0644"
+  end
+end
+
+
 # Register Image Service
 keystone_service "Register Image Service" do
   auth_host ks_admin_endpoint["host"]
