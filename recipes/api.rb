@@ -95,24 +95,37 @@ template "/etc/glance/glance-scrubber-paste.ini" do
 end
 
 # are we using rbd to store our images?
-if node['glance']['api']['default_store'] == "rbd"
+if node['glance']['api']['default_store'] == "rbd" && node['ceph']['install_method'] == "chef"
+
+  include_recipe "ceph::repo"
+  include_recipe "ceph"
+  include_recipe "ceph::conf"
 
   rbd_store_user = node['glance']['api']['rbd']['rbd_store_user']
   rbd_store_pool = node['glance']['api']['rbd']['rbd_store_pool']
+  rbd_store_pool_pg_num = node['glance']['api']['rbd']['rbd_store_pool_pg_num']
 
-  # get (or create) the glance rbd user in cephx
-  Mixlib::ShellOut.new("ceph auth get-or-create client.#{rbd_store_user}").run_command
-  Mixlib::ShellOut.new("ceph auth caps client.#{rbd_store_user} mon 'allow r' osd 'allow class-read object_prefix rbd_children, allow rwx pool=#{rbd_store_pool}'").run_command
+  # ruby block needed to prevent this failing at compile time.
+  ruby_block 'configure rbd for glance' do
+    block do
 
-  # get the full client, with caps, and write it out to file
-  # TODO(mancdaz): discover ceph config dir rather than hardcode
-  rbd_user_keyring = Mixlib::ShellOut.new("ceph auth get client.#{rbd_store_user}").run_command.stdout
-  file "/etc/ceph/ceph.client.#{rbd_store_user}.keyring" do
-    content rbd_user_keyring
-    mode "0644"
+      # get (or create) the glance rbd user in cephx
+      Mixlib::ShellOut.new("ceph auth get-or-create client.#{rbd_store_user}").run_command
+      Mixlib::ShellOut.new("ceph auth caps client.#{rbd_store_user} mon 'allow r' osd 'allow class-read object_prefix rbd_children, allow rwx pool=#{rbd_store_pool}'").run_command
+
+      # get the full client, with caps, and write it out to file
+      # TODO(mancdaz): discover ceph config dir rather than hardcode
+      rbd_user_keyring = Mixlib::ShellOut.new("ceph auth get client.#{rbd_store_user}").run_command.stdout
+      f = File.open("/etc/ceph/ceph.client.#{rbd_store_user}.keyring", 'w')
+      f.write(rbd_user_keyring)
+      f.close
+
+      # create the pool with provided pg_num
+      Mixlib::ShellOut.new("ceph osd pool create #{rbd_store_pool} #{rbd_store_pool_pg_num} #{rbd_store_pool_pg_num}").run_command
+    end
   end
-end
 
+end
 
 # Register Image Service
 keystone_service "Register Image Service" do
